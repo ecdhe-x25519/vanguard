@@ -3,52 +3,39 @@ use aya_ebpf::{
     programs::XdpContext,
 };
 
-use vanguard_core::{
-    common::{
-        commons::EbpfAction,
-        packet, rules::Tuple5,
+use network_types::{
+    eth::{EthHdr, EtherType},
+    ip::{
+        IpProto,
+        Ipv4Hdr,
+        Ipv6Hdr
     },
-    xdp::maps::rules::XdpRuleAction
+    tcp::{TCP_HDR_LEN, TcpHdr},
+    udp::UdpHdr,
 };
+use vanguard_core::xdp::maps::rules::XdpRuleAction;
 
-use crate::maps::*;
+use core::mem;
 
 #[inline(always)]
-#[allow(unsafe_op_in_unsafe_fn)]
-pub unsafe fn try_filter_ip(
+pub fn ptr_at<T>(
     ctx: &XdpContext,
     offset: usize
-) -> Result<(EbpfIp, EbpfAction), EbpfAction> {
-    let tuple = packet::try_parse_ip(
-        ctx.data(),
-        ctx.data_end(),
-        offset,
-    )?;
+) -> Result<*mut T, ()> {
+    let (start, end) = (ctx.data(), ctx.data_end());
+    let len = mem::size_of::<T>();
 
-    let key = Tuple5 {
-
-    };
-
-    if let Some(val) = RULES.get(key) {
-        match val.action {
-            XdpRuleAction::TX => {
-                packet::
-            }
-            XdpRuleAction::REDIRECT => {
-                packet::
-            }
-            _ => {}
-        }
-
-        return Ok((key.ip, val.action));
+    if start + offset + len > end {
+        return Err(());
     }
-    
-    return Ok((key.ip, 2))
+
+    let ptr = (start + offset) as *mut T;
+    Ok(ptr)
 }
 
 #[inline(always)]
 #[allow(unsafe_op_in_unsafe_fn)]
-pub unsafe fn try_parse_ip2(
+pub unsafe fn try_parse_ip(
     ctx: &XdpContext,
     offset: usize
 ) -> Result<(EbpfIp, u32), u32> {
@@ -163,6 +150,45 @@ pub unsafe fn try_parse_ip2(
         },
         _ => {
             return Err(xdp_action::XDP_PASS)
+        }
+    }
+
+    #[allow(unreachable_code)]
+    Err(xdp_action::XDP_PASS)
+}
+
+#[inline(always)]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn try_parse_proto(
+    ctx: &XdpContext,
+    offset: usize,
+    protocol: IpProto
+) -> Result<(*mut [u8; 2], *mut [u8; 2]), u32> {
+    match protocol {
+        IpProto::Tcp => {
+            let tcphdr: *mut TcpHdr = match ptr_at(ctx, TCP_HDR_LEN + offset) {
+                Ok(hdr) => hdr,
+                Err(_) => return Err(xdp_action::XDP_DROP),
+            };
+
+            let src = core::ptr::addr_of_mut!((*tcphdr).source);
+            let dst = core::ptr::addr_of_mut!((*tcphdr).dest);
+            
+            return Ok((src, dst))
+        },
+        IpProto::Udp => {
+            let udphdr: *mut UdpHdr = match ptr_at(ctx, UdpHdr::LEN + offset) {
+                Ok(hdr) => hdr,
+                Err(_) => return Err(xdp_action::XDP_DROP),
+            };
+
+            let src = core::ptr::addr_of_mut!((*udphdr).src);
+            let dst = core::ptr::addr_of_mut!((*udphdr).dst);
+            
+            return Ok((src, dst))
+        },
+        _ => {
+            return Err(xdp_action::XDP_PASS);
         }
     }
 

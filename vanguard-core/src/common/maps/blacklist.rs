@@ -2,7 +2,10 @@
 use crate::get_map;
 
 #[cfg(feature = "userspace")]
-use crate::{common::{commons::*, ip::*}, error::VanguardError};
+use crate::{
+    common::{commons::*, ip::*},
+    error::VanguardError
+};
 
 #[repr(C)]
 #[derive(Clone, Copy)]

@@ -6,9 +6,9 @@ general:
     pin: false
 
   block_config:
-    base_block_secs: 60,
-    max_block_secs: 604800,
-    rep_cooldown_secs: 1800,
+    base_block_secs: 60
+    max_block_secs: 604800
+    rep_cooldown_secs: 1800
 
   grpc:
     up: true
@@ -54,7 +54,6 @@ xdp:
         proto: "udp"
       value:
         action: "redirect"
-        flag: "mutate"
         to:
           ip: "1.1.1.1"
           port: 53

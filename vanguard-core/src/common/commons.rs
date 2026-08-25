@@ -12,6 +12,53 @@ pub use aya::{
 
 use crate::error::VanguardError;
 
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EbpfAction {
+    DROP,
+    PASS,
+    TX,
+    REDIRECT,
+    ABORT,
+}
+
+#[cfg(feature = "userspace")]
+unsafe impl Pod for EbpfAction {}
+
+impl EbpfAction {
+    // XDP_DROP = 1
+    // XDP_PASS = 2
+    // XDP_TX = 3
+    // XDP_REDIRECT = 4
+
+    // TC_ACT_OK = 0
+    // TC_ACT_SHOT = 2
+    // TC_ACT_REDIRECT = 7
+    // TC_ACT_UNSPEC = -1
+
+    #[inline(always)]
+    pub fn to_xdp(self) -> u32 {
+        match self {
+            Self::ABORT => 0,
+            Self::DROP => 1,
+            Self::PASS => 2,
+            Self::TX => 3,
+            Self::REDIRECT => 4,
+        }
+    }
+
+    #[inline(always)]
+    pub fn to_tc(self) -> i32 {
+        match self {
+            Self::ABORT => -1,
+            Self::PASS => 0,
+            Self::DROP => 2,
+            Self::REDIRECT => 7,
+            _ => -1,
+        }
+    }
+}
+
 #[cfg(feature = "userspace")]
 mod get_map {
     #[macro_export]
