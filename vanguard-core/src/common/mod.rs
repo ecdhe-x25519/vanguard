@@ -4,4 +4,3 @@ pub mod consts;
 pub mod maps;
 pub mod config;
 pub mod packet;
-pub mod rules;

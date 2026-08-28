@@ -1,6 +1,7 @@
 pub mod counter;
 pub mod stats;
 pub mod config;
+pub mod rules;
 
 #[cfg(feature = "userspace")]
 use crate::error::VanguardError;

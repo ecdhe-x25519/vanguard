@@ -10,7 +10,22 @@ pub use aya::{
     maps::{PerCpuArray, HashMap, MapData, Array, lpm_trie::*, SockHash, SockMap}
 };
 
+use super::ip::*;
+
 use crate::error::VanguardError;
+
+#[repr(C, align(8))]
+#[derive(Clone, Copy)]
+pub struct Tuple5 {
+    pub src_ip: EbpfIp,
+    pub dst_ip: EbpfIp,
+    pub src_port: EbpfPort,
+    pub dst_port: EbpfPort,
+    pub proto: EbpfProto,
+}
+
+#[cfg(feature = "userspace")]
+unsafe impl aya::Pod for Tuple5 {}
 
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -55,6 +70,30 @@ impl EbpfAction {
             Self::DROP => 2,
             Self::REDIRECT => 7,
             _ => -1,
+        }
+    }
+}
+
+#[cfg(feature = "userspace")]
+impl Parse for EbpfAction {
+    fn as_str(&self) -> Result<String, VanguardError> {
+        match self {
+            Self::ABORT => Ok("abort".to_string()),
+            Self::DROP => Ok("drop".to_string()),
+            Self::PASS => Ok("pass".to_string()),
+            Self::TX => Ok("tx".to_string()),
+            Self::REDIRECT => Ok("redirect".to_string()),
+        }
+    }
+
+    fn to_type(s: String) -> Result<Self, VanguardError> {
+        match s.to_lowercase().trim() {
+            "abort" => Ok(Self::ABORT),
+            "drop" => Ok(Self::DROP),
+            "pass" => Ok(Self::PASS),
+            "tx" => Ok(Self::TX),
+            "redirect" => Ok(Self::REDIRECT),
+            _ => Err(VanguardError::IoError("unknown action"))
         }
     }
 }

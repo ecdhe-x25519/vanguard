@@ -3,29 +3,29 @@ use super::*;
 
 #[repr(C, align(8))]
 #[derive(Clone, Copy)]
-pub struct XdpRuleKey(pub Tuple5);
+pub struct SkbRuleKey(Tuple5);
 #[cfg(feature = "userspace")]
-unsafe impl Pod for XdpRuleKey {}
+unsafe impl Pod for SkbRuleKey {}
 
 #[repr(C, align(8))]
 #[derive(Clone, Copy)]
-pub struct XdpRuleValue {
-    pub redirect: XdpRuleKey,
+pub struct SkbRuleValue {
+    pub redirect: SkbRuleKey,
     pub action: EbpfAction,
 }
 #[cfg(feature = "userspace")]
-unsafe impl Pod for XdpRuleValue {}
+unsafe impl Pod for SkbRuleValue {}
 
 #[cfg(feature = "userspace")]
 pub struct XdpRulesMap;
 
 #[cfg(feature = "userspace")]
 impl XdpRulesMap {
-    pub fn get(bpf: &mut Ebpf) -> Result<HashMap<MapData, XdpRuleKey, XdpRuleValue>, VanguardError> {
-        get_map!(bpf, "RULES", HashMap, HashMap<MapData, XdpRuleKey, XdpRuleValue>)
+    pub fn get(bpf: &mut Ebpf) -> Result<HashMap<MapData, SkbRuleKey, SkbRuleValue>, VanguardError> {
+        get_map!(bpf, "RULES", HashMap, HashMap<MapData, SkbRuleKey, SkbRuleValue>)
     }
 
-    pub fn add(bpf: &mut Ebpf, key: XdpRuleKey, value: XdpRuleValue) -> Result<(), VanguardError> {
+    pub fn add(bpf: &mut Ebpf, key: SkbRuleKey, value: SkbRuleValue) -> Result<(), VanguardError> {
         let mut map = Self::get(bpf)?;
 
         map.insert(key, value, 0)
@@ -33,7 +33,7 @@ impl XdpRulesMap {
         Ok(())
     }
 
-    pub fn remove(bpf: &mut Ebpf, key: XdpRuleKey) -> Result<(), VanguardError> {
+    pub fn remove(bpf: &mut Ebpf, key: SkbRuleKey) -> Result<(), VanguardError> {
         let mut map = Self::get(bpf)?;
 
         map.remove(&key)

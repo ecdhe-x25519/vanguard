@@ -8,18 +8,18 @@ use network_types::{
 use core::mem;
 
 use crate::common::{
-    ip::*,
     commons::EbpfAction,
+    ip::{EbpfIp, EbpfPort}
 };
 
 #[repr(C)]
-pub struct OffsetEbpfPort(pub u16);
+pub struct OffsetEbpfPort { pub ptr: u16 }
 
 #[repr(C)]
-pub struct OffsetEbpfProto(pub u16);
+pub struct OffsetEbpfProto { pub ptr: u16 }
 
 #[repr(C)]
-pub struct OffsetEbpfMac(pub u16);
+pub struct OffsetEbpfMac { pub ptr: u16 }
 
 #[repr(C)]
 pub struct OffsetEbpfIp {
@@ -45,7 +45,23 @@ pub struct OffsetCsum {
 }
 
 #[repr(C)]
-pub struct OffsetCsumL(pub u16);
+pub struct OffsetCsumL { pub ptr: u16 }
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct HeaderUpdates {
+    pub src_ip: Option<EbpfIp>,
+    pub dst_ip: Option<EbpfIp>,
+    pub src_port: Option<u16>,
+    pub dst_port: Option<u16>,
+}
+
+#[inline(always)]
+#[allow(unsafe_op_in_unsafe_fn)]
+pub unsafe fn read_unchecked<T: Copy>(offset: u16, data: usize) -> T {
+    let abs_ptr = (data + offset as usize) as *const u8;
+    core::ptr::read_unaligned(abs_ptr as *const T)
+}
 
 #[inline(always)]
 pub fn ptr_mut_at<T>(
@@ -78,6 +94,8 @@ pub unsafe fn try_parse_ip<F>(
     let src_mac = core::ptr::addr_of_mut!((*ethhdr).src_addr);
     let dst_mac = core::ptr::addr_of_mut!((*ethhdr).dst_addr);
 
+    let l3_offset = offset + EthHdr::LEN;
+
     match unsafe { (*ethhdr).ether_type() } {
         Ok(EtherType::Ipv4) => {
             let iphdr: *mut Ipv4Hdr = match ptr_mut_at(data, data_end, EthHdr::LEN) {
@@ -102,23 +120,23 @@ pub unsafe fn try_parse_ip<F>(
                 src_port,
                 dst_port,
                 l4_csum
-            ) = try_parse_proto(data, data_end, ip_len, proto)?;
+            ) = try_parse_proto(data, data_end, l3_offset + ip_len, proto)?;
 
             let ptr_tuple = OffsetTuple7 {
-                src_mac: OffsetEbpfMac((src_mac as usize - data) as u16),
-                dst_mac: OffsetEbpfMac((dst_mac as usize - data) as u16),
+                src_mac: OffsetEbpfMac { ptr: (src_mac as usize - data) as u16 },
+                dst_mac: OffsetEbpfMac { ptr: (dst_mac as usize - data) as u16 },
                 src_ip: OffsetEbpfIp { ptr: (src_ip as usize - data) as u16, is_v6: false },
-                src_port: OffsetEbpfPort((src_port.0 as usize - data) as u16),
+                src_port,
                 dst_ip: OffsetEbpfIp { ptr: (dst_ip as usize - data) as u16, is_v6: false },
-                dst_port: OffsetEbpfPort((dst_port.0 as usize - data) as u16),
-                proto: OffsetEbpfProto(proto as u16),
+                dst_port,
+                proto: OffsetEbpfProto { ptr: (proto as usize - data) as u16 },
             };
 
             return Ok((
                 ptr_tuple,
                 OffsetCsum{
-                    l3_check: l3_csum as u16,
-                    l4_check: l4_csum.0
+                    l3_check: (l3_csum as usize - data) as u16,
+                    l4_check: l4_csum.ptr
                 }
             ))
         },
@@ -139,23 +157,27 @@ pub unsafe fn try_parse_ip<F>(
                 }
             };
 
-            let (src_port, dst_port, l4_csum) = try_parse_proto(data, data_end, ip_len, proto)?;
+            let (
+                src_port,
+                dst_port,
+                l4_csum
+            ) = try_parse_proto(data, data_end, l3_offset + ip_len, proto)?;
 
             let ptr_tuple = OffsetTuple7 {
-                src_mac: OffsetEbpfMac((src_mac as usize - data) as u16),
-                dst_mac: OffsetEbpfMac((dst_mac as usize - data) as u16),
+                src_mac: OffsetEbpfMac { ptr: (src_mac as usize - data) as u16 },
+                dst_mac: OffsetEbpfMac { ptr: (dst_mac as usize - data) as u16 },
                 src_ip: OffsetEbpfIp { ptr: (src_ip as usize - data) as u16, is_v6: true },
-                src_port: OffsetEbpfPort((src_port.0 as usize - data) as u16),
+                src_port,
                 dst_ip: OffsetEbpfIp { ptr: (dst_ip as usize - data) as u16, is_v6: true },
-                dst_port: OffsetEbpfPort((dst_port.0 as usize - data) as u16),
-                proto: OffsetEbpfProto(proto as u16),
+                dst_port,
+                proto: OffsetEbpfProto { ptr: (proto as usize - data) as u16 },
             };
 
             return Ok((
                 ptr_tuple,
                 OffsetCsum{
                     l3_check: 0,
-                    l4_check: l4_csum.0
+                    l4_check: l4_csum.ptr
                 }
             ))
         },
@@ -178,7 +200,7 @@ unsafe fn try_parse_proto(
 ) -> Result<(OffsetEbpfPort, OffsetEbpfPort, OffsetCsumL), EbpfAction> {
     match protocol {
         IpProto::Tcp => {
-            let tcphdr: *mut TcpHdr = match ptr_mut_at(data, data_end, TcpHdr::LEN + offset) {
+            let tcphdr: *mut TcpHdr = match ptr_mut_at(data, data_end, offset) {
                 Ok(hdr) => hdr,
                 Err(_) => return Err(EbpfAction::DROP),
             };
@@ -189,13 +211,13 @@ unsafe fn try_parse_proto(
             let l4_csum = core::ptr::addr_of_mut!((*tcphdr).check);
             
             return Ok((
-                OffsetEbpfPort( src as u16 ),
-                OffsetEbpfPort( dst as u16 ),
-                OffsetCsumL(l4_csum as u16)
+                OffsetEbpfPort { ptr: (src as usize - data) as u16 },
+                OffsetEbpfPort { ptr: (dst as usize - data) as u16 },
+                OffsetCsumL { ptr: (l4_csum as usize - data) as u16 }
             ))
         },
         IpProto::Udp => {
-            let udphdr: *mut UdpHdr = match ptr_mut_at(data, data_end, UdpHdr::LEN + offset) {
+            let udphdr: *mut UdpHdr = match ptr_mut_at(data, data_end, offset) {
                 Ok(hdr) => hdr,
                 Err(_) => return Err(EbpfAction::DROP),
             };
@@ -206,9 +228,9 @@ unsafe fn try_parse_proto(
             let l4_csum = core::ptr::addr_of_mut!((*udphdr).check);
             
             return Ok((
-                OffsetEbpfPort( src as u16 ),
-                OffsetEbpfPort( dst as u16 ),
-                OffsetCsumL(l4_csum as u16)
+                OffsetEbpfPort { ptr: (src as usize - data) as u16 },
+                OffsetEbpfPort { ptr: (dst as usize - data) as u16 },
+                OffsetCsumL { ptr: (l4_csum as usize - data) as u16 }
             ))
         },
         _ => {
@@ -226,9 +248,11 @@ pub unsafe fn swap<T: Copy>(
     src: *mut T,
     dst: *mut T,
 ) {
-    let tmp = core::ptr::read_volatile(src);
-    core::ptr::write_volatile(src, core::ptr::read_volatile(dst));
-    core::ptr::write_volatile(dst, tmp);
+    let val_src = core::ptr::read_volatile(src);
+    let val_dst = core::ptr::read_volatile(dst);
+    
+    core::ptr::write_volatile(src, val_dst);
+    core::ptr::write_volatile(dst, val_src);
 }
 
 #[inline(always)]
@@ -246,58 +270,95 @@ fn csum_diff_u32(old: u32, new: u32, mut current_sum: u32) -> u32 {
     current_sum
 }
 
-// #[inline(always)]
-// #[allow(unsafe_op_in_unsafe_fn)]
-// pub unsafe fn update_dst_ipv_checksums(
-//     data: usize,
-//     dst_ip_offset: u16,
-//     new_ip: EbpfIp,
-//     offset_csum: OffsetCsum,
-//     // Смещение до поля check в IPv4 (l3_offset + 10)
-//     // Смещение до поля check в TCP (l4_offset + 16) или UDP (l4_offset + 6)
-// ) {
-//     let l4_check_ptr = (data + offset_csum.l4_check as usize) as *mut u16;
-//     let mut l4_sum = !u16::from_be(core::ptr::read_volatile(l4_check_ptr)) as u32;
+#[inline(always)]
+fn csum_diff_u16(old: u16, new: u16, mut current_sum: u32) -> u32 {
+    current_sum += !old as u32;
+    current_sum += new as u32;
+    current_sum
+}
 
-//     if !new_ip.is_v6 {
-//         let ip_ptr = (data + dst_ip_offset as usize) as *mut u32;
-//         let old_ipv4_be = core::ptr::read_volatile(ip_ptr);
+#[inline(always)]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn update_port(data: usize, offset: usize, new_port_be: u16, l4_sum: &mut u32) {
+    let ptr = (data + offset) as *mut u16;
+    let old_be = core::ptr::read_volatile(ptr);
+    if old_be != new_port_be {
+        *l4_sum = csum_diff_u16(u16::from_be(old_be), u16::from_be(new_port_be), *l4_sum);
+        core::ptr::write_volatile(ptr, new_port_be);
+    }
+}
 
-//         let new_ipv4_be = unsafe { 
-//             let mut tmp = [0u8; 4];
-//             tmp.copy_from_slice(&new_ip.in6_u[0..4]);
-//             core::mem::transmute::<[u8; 4], u32>(tmp)
-//         };
+#[inline(always)]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn update_ipv4(data: usize, offset: usize, new_ip: EbpfIp, l3_sum: &mut u32, l4_sum: &mut u32) {
+    let ptr = (data + offset) as *mut u32;
+    let old_be = core::ptr::read_volatile(ptr);
+    let new_be = u32::from_ne_bytes([new_ip.addr[15], new_ip.addr[14], new_ip.addr[13], new_ip.addr[12]]);
+    if old_be != new_be {
+        *l3_sum = csum_diff_u32(u32::from_be(old_be), u32::from_be(new_be), *l3_sum);
+        *l4_sum = csum_diff_u32(u32::from_be(old_be), u32::from_be(new_be), *l4_sum);
+        core::ptr::write_volatile(ptr, new_be);
+    }
+}
 
-//         if old_ipv4_be == new_ipv4_be { return; }
+#[inline(always)]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn update_ipv6(data: usize, offset: usize, new_ip: EbpfIp, l4_sum: &mut u32) {
+    let ptr = (data + offset) as *mut [u32; 4];
+    let old_be = core::ptr::read_volatile(ptr);
+    let new_be: [u32; 4] = core::mem::transmute(new_ip.addr);
+    if old_be != new_be {
+        for i in 0..4 {
+            let old_word = u32::from_be(old_be[i]);
+            let new_word = u32::from_be(new_be[i]);
+            if old_word != new_word {
+                *l4_sum = csum_diff_u32(old_word, new_word, *l4_sum);
+            }
+        }
+        core::ptr::write_volatile(ptr, new_be);
+    }
+}
 
-//         core::ptr::write_volatile(ip_ptr, new_ipv4_be);
+#[inline(always)]
+#[allow(unsafe_op_in_unsafe_fn)]
+pub unsafe fn update_net_headers(
+    data: usize,
+    l3_offset: u16,
+    l4_offset: u16,
+    is_v6: bool,
+    updates: HeaderUpdates,
+    offset_csum: OffsetCsum,
+) {
+    let l4_check_ptr = (data + offset_csum.l4_check as usize) as *mut u16;
+    let mut l4_sum = !u16::from_be(core::ptr::read_volatile(l4_check_ptr)) as u32;
 
-//         let l3_check_ptr = (data + offset_csum.l3_check as usize) as *mut u16;
-//         let l3_old_sum = !u16::from_be(core::ptr::read_volatile(l3_check_ptr)) as u32;
-//         let l3_new_sum = csum_diff_u32(u32::from_be(old_ipv4_be), u32::from_be(new_ipv4_be), l3_old_sum);
-//         core::ptr::write_volatile(l3_check_ptr, u16::to_be(csum_fold(l3_new_sum)));
+    if let Some(src_port) = updates.src_port {
+        update_port(data, l4_offset as usize, src_port, &mut l4_sum);
+    }
+    if let Some(dst_port) = updates.src_port {
+        update_port(data, l4_offset as usize + 2, dst_port, &mut l4_sum);
+    }
 
-//         l4_sum = csum_diff_u32(u32::from_be(old_ipv4_be), u32::from_be(new_ipv4_be), l4_sum);
-//         core::ptr::write_volatile(l4_check_ptr, u16::to_be(csum_fold(l4_sum)));
+    if !is_v6 {
+        let l3_check_ptr = (data + offset_csum.l3_check as usize) as *mut u16;
+        let mut l3_sum = !u16::from_be(core::ptr::read_volatile(l3_check_ptr)) as u32;
 
-//     } else {
-//         let ip_ptr = (data + dst_ip_offset as usize) as *mut [u32; 4];
-//         let old_ipv6_be = core::ptr::read_volatile(ip_ptr);
+        if let Some(src_ip) = updates.src_ip {
+            update_ipv4(data, l3_offset as usize + 12, src_ip, &mut l3_sum, &mut l4_sum);
+        }
+        if let Some(dst_ip) = updates.dst_ip {
+            update_ipv4(data, l3_offset as usize + 16, dst_ip, &mut l3_sum, &mut l4_sum);
+        }
 
-//         let new_ipv6_be: [u32; 4] = unsafe { core::mem::transmute(new_ip.in6_u) };
+        core::ptr::write_volatile(l3_check_ptr, u16::to_be(csum_fold(l3_sum)));
+    } else {
+        if let Some(src_ip) = updates.src_ip {
+            update_ipv6(data, l3_offset as usize + 12, src_ip, &mut l4_sum);
+        }
+        if let Some(dst_ip) = updates.dst_ip {
+            update_ipv6(data, l3_offset as usize + 16, dst_ip, &mut l4_sum);
+        }
+    }
 
-//         if old_ipv6_be == new_ipv6_be { return; }
-
-//         for i in 0..4 {
-//             let old_word = u32::from_be(old_ipv6_be[i]);
-//             let new_word = u32::from_be(new_ipv6_be[i]);
-//             if old_word != new_word {
-//                 l4_sum = csum_diff_u32(old_word, new_word, l4_sum);
-//             }
-//         }
-
-//         core::ptr::write_volatile(ip_ptr, new_ipv6_be);
-//         core::ptr::write_volatile(l4_check_ptr, u16::to_be(csum_fold(l4_sum)));
-//     }
-// }
+    core::ptr::write_volatile(l4_check_ptr, u16::to_be(csum_fold(l4_sum)));
+}

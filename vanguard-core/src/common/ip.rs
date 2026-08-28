@@ -25,9 +25,12 @@ pub struct EbpfIp {
     pub addr: [u8; 16],
     pub is_v6: bool,
 }
-
 #[cfg(feature = "userspace")]
 unsafe impl Pod for EbpfIp {}
+
+impl EbpfIp {
+    
+}
 
 #[cfg(feature = "userspace")]
 impl Parse for EbpfIp {

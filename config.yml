@@ -26,9 +26,10 @@ general:
 
 xdp:
   config:
+    enable: true
     rate_limit: 1000
     burst_limit: 1000
-    default_action: pass
+    default_action: "pass"
 
   rules:
     - key:
@@ -62,6 +63,7 @@ xdp:
 
 tc:
   config:
+    enable: true
     default_action: "pass"
 
   rules:
@@ -96,6 +98,7 @@ tc:
 
 sk:
   config:
+    enable: true
     default_action: "pass"
 
   rules:
@@ -117,6 +120,7 @@ sk:
 
 msg:
   config:
+    enable: true
     default_action: "pass"
     
   rules:

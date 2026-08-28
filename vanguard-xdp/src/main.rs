@@ -21,9 +21,10 @@ pub fn main(ctx: XdpContext) -> u32 {
             update_stats(ret);
             ret
         }
-        Err(_) => {
-            update_stats(1);
-            1
+        Err(ret) => {
+            let ret = ret.to_xdp();
+            update_stats(ret);
+            ret
         },
     }
 }

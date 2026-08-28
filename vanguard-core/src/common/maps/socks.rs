@@ -1,9 +1,7 @@
 #[cfg(feature = "userspace")]
-use crate::get_map;
+use super::*;
 
 #[cfg(feature = "userspace")]
-use crate::{common::{commons::*, ip::*}, error::VanguardError};
-
 use std::os::fd::AsRawFd;
 
 #[derive(Copy, Clone)]
@@ -19,30 +17,49 @@ pub struct SockKey {
 #[cfg(feature = "userspace")]
 unsafe impl crate::common::commons::Pod for SockKey {}
 
-pub struct SockMapMap;
+pub struct SockMapMap {
+    map: SockMap<MapData>
+}
 impl SockMapMap {
-    pub fn get(bpf: &mut Ebpf) -> Result<SockMap<MapData>, VanguardError> {
-        get_map!(bpf, "SOCK_MAP", SockMap, SockMap<MapData>)
+    pub fn init(bpf: &mut Ebpf) -> Result<Self, VanguardError> {
+        let map = get_map!(bpf, "SOCK_MAP", SockMap, SockMap<MapData>)?;
+        Ok( Self { map })
     }
 
-    pub fn add(bpf: &mut Ebpf, index: u32, socket: impl AsRawFd) -> Result<(), VanguardError> {
-        let mut map = Self::get(bpf)?;
-        map.set(index, &socket, 0)
+    pub fn add(&mut self, index: u32, socket: impl AsRawFd) -> Result<(), VanguardError> {
+        self.map.set(index, &socket, 0)
             .map_err(|e| VanguardError::EbpfMapError(format!("{e}")))?;
         
         Ok(())
     }
+
+    pub fn del(&mut self, index: u32) -> Result<(), VanguardError> {
+        self.map.clear_index(&index)
+            .map_err(|e| VanguardError::EbpfMapError(format!("{e}")))?;
+
+        Ok(())
+    }
 }
 
-pub struct SockHashMap;
+pub struct SockHashMap {
+    map: SockHash<MapData, SockKey>
+}
+
 impl SockHashMap {
-    pub fn get(bpf: &mut Ebpf) -> Result<SockHash<MapData, SockKey>, VanguardError> {
-        get_map!(bpf, "SOCK_HASH", SockHash, SockHash<MapData, SockKey>)
+    pub fn init(bpf: &mut Ebpf) -> Result<Self, VanguardError> {
+        let map = get_map!(bpf, "SOCK_HASH", SockHash, SockHash<MapData, SockKey>)?;
+        Ok( Self { map })
     }
 
-    pub fn add(bpf: &mut Ebpf, key: SockKey, value: impl AsRawFd) -> Result<(), VanguardError> {
-        let mut map = Self::get(bpf)?;
-        map.insert(key, value, 0)
+    pub fn add(&mut self, key: SockKey, value: impl AsRawFd) -> Result<(), VanguardError> {
+        self.map.insert(key, value, 0)
+            .map_err(|e| VanguardError::EbpfMapError(format!("{e}")))?;
+
+        Ok(())
+    }
+
+    pub fn del(&mut self, key: SockKey) -> Result<(), VanguardError> {
+        self.map.remove(&key)
             .map_err(|e| VanguardError::EbpfMapError(format!("{e}")))?;
 
         Ok(())
