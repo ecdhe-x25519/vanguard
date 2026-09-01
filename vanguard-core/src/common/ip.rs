@@ -9,15 +9,15 @@ use std::str::FromStr;
 
 #[repr(C, align(4))]
 #[derive(Clone, Copy)]
-pub struct EbpfPort(pub [u8; 2]);
+pub struct EbpfPort { pub inner: [u8; 2] }
 
 #[repr(C, align(4))]
 #[derive(Clone, Copy)]
-pub struct EbpfProto(pub u8);
+pub struct EbpfProto { pub inner: u8 }
 
 #[repr(C, align(4))]
 #[derive(Clone, Copy)]
-pub struct EbpfMac(pub [u8; 6]);
+pub struct EbpfMac { pub inner: [u8; 6] }
 
 #[repr(C, align(4))]
 #[derive(Clone, Copy)]

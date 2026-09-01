@@ -3,15 +3,23 @@ use super::*;
 
 #[repr(C, align(8))]
 #[derive(Clone, Copy)]
-pub struct XdpRuleKey(pub Tuple5);
+pub struct XdpRuleKey{ pub inner: Tuple5 }
 #[cfg(feature = "userspace")]
 unsafe impl Pod for XdpRuleKey {}
 
 #[repr(C, align(8))]
 #[derive(Clone, Copy)]
-pub struct XdpRuleValue {
-    pub redirect: XdpRuleKey,
-    pub action: EbpfAction,
+pub enum XdpRuleValue {
+    Drop,
+    Pass,
+    Tx {
+        backends: [u32; 16],
+        encap: bool,
+    },
+    Redirect {
+        target_ifindex: u32,
+        target_mac: [u8; 6],
+    },
 }
 #[cfg(feature = "userspace")]
 unsafe impl Pod for XdpRuleValue {}

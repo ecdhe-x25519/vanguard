@@ -17,11 +17,12 @@ pub struct SockKey {
 #[cfg(feature = "userspace")]
 unsafe impl crate::common::commons::Pod for SockKey {}
 
+#[cfg(feature = "userspace")]
 pub struct SockMapMap {
     map: SockMap<MapData>
 }
 impl SockMapMap {
-    pub fn init(bpf: &mut Ebpf) -> Result<Self, VanguardError> {
+    pub fn get(bpf: &mut Ebpf) -> Result<Self, VanguardError> {
         let map = get_map!(bpf, "SOCK_MAP", SockMap, SockMap<MapData>)?;
         Ok( Self { map })
     }
@@ -41,12 +42,13 @@ impl SockMapMap {
     }
 }
 
+#[cfg(feature = "userspace")]
 pub struct SockHashMap {
     map: SockHash<MapData, SockKey>
 }
 
 impl SockHashMap {
-    pub fn init(bpf: &mut Ebpf) -> Result<Self, VanguardError> {
+    pub fn get(bpf: &mut Ebpf) -> Result<Self, VanguardError> {
         let map = get_map!(bpf, "SOCK_HASH", SockHash, SockHash<MapData, SockKey>)?;
         Ok( Self { map })
     }

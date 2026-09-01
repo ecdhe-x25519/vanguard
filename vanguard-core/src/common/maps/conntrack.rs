@@ -8,7 +8,7 @@ pub struct ConnMap {
 
 #[cfg(feature = "userspace")]
 impl ConnMap {
-    pub fn init(bpf: &mut Ebpf) -> Result<Self, VanguardError> {
+    pub fn get(bpf: &mut Ebpf) -> Result<Self, VanguardError> {
         let map = get_map!(bpf, "CONNTRACK", LruHashMap, HashMap<MapData, Tuple5, Tuple5>)?;
         Ok(Self { map })
     }

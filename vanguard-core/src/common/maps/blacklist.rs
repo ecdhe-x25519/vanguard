@@ -17,7 +17,7 @@ pub struct BlocklistMap {
 
 #[cfg(feature = "userspace")]
 impl BlocklistMap {
-    pub fn init(bpf: &mut Ebpf) -> Result<Self, VanguardError> {
+    pub fn get(bpf: &mut Ebpf) -> Result<Self, VanguardError> {
         let map = get_map!(bpf, "BLACKLIST", LpmTrie, LpmTrie<MapData, EbpfIp, u8>)?;
         Ok(Self { map })
     }

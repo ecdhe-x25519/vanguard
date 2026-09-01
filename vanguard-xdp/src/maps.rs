@@ -19,6 +19,9 @@ pub use vanguard_core::{
 };
 
 #[map]
+pub static MAGLEV_POOL: Array<EbpfIp> = Array::<EbpfIp>::with_max_entries(65537, 0);
+
+#[map]
 pub static CONFIG: Array<XdpConfig> = Array::<XdpConfig>::with_max_entries(1, 0);
 
 #[map]

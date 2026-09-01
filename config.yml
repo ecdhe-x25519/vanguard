@@ -15,14 +15,14 @@ general:
     addr: "0.0.0.0:8080"
 
   blacklist:
-  - ip: "1.2.3.4"
-    blocked_until: 1234567890
-  - ip: "5.6.7.8"
+    - ip: "1.2.3.4"
+      blocked_until: 1234567890
+    - ip: "5.6.7.8"
 
   whitelist:
-  - "192.168.1.1"
-  - "10.0.0.0/24"
-  - "::1"
+    - "192.168.1.1"
+    - "10.0.0.0/24"
+    - "::1"
 
 xdp:
   config:
@@ -32,34 +32,26 @@ xdp:
     default_action: "pass"
 
   rules:
-    - key:
-        ip: "5.6.7.8"
-        port: 80
-        eth: "ipv4"
-        proto: "tcp"
-      value:
-        action: "drop"
+    - key: { ip: "5.6.7.8", port: 80, eth: "ipv4", proto: "tcp" }
+      value: { action: "drop" }
 
-    - key:
-        ip: "2001:db8::1"
-        port: 443
-        eth: "ipv6"
-        proto: "tcp"
+    - key: { ip: "2001:db8::1", port: 443, eth: "ipv6", proto: "udp" }
+      value: { action: "pass" }
+    
+    - key: { ip: "0.0.0.0", port: 53, eth: "ipv4", proto: "tcp" }
       value:
-        action: "pass"
+        action: "tx"
+        flag: 
+        encap: true
+        to:
+          - { ip: "1.1.1.1", port: 53 }
+          - { ip: "8.8.8.8", port: 53 }
+          - { ip: "77.88.8.8", port: 53 }
 
-    - key:
-        ip: "0.0.0.0"
-        port: 53
-        eth: "ipv4"
-        proto: "udp"
+    - key: { ip: "1.1.1.1", port: 8000, eth: "ipv4", proto: "udp" }
       value:
         action: "redirect"
-        to:
-          ip: "1.1.1.1"
-          port: 53
-          eth: "ipv4"
-          proto: "udp"
+        to_iface: "docker"
 
 tc:
   config:
@@ -67,34 +59,21 @@ tc:
     default_action: "pass"
 
   rules:
-    - key:
-        direction: "egress"
-        ip: "0.0.0.0"
-        port: 25
-        eth: "ipv4"
-        proto: "tcp"
-      value:
-        action: "drop"
+    - key: { direction: "egress", ip: "0.0.0.0", port: 25, eth: "ipv4", proto: "tcp" }
+      value: { action: "drop", track: false }
 
-    - key:
-        direction: "ingress"
-        ip: "0.0.0.0"
-        port: 8080
-        eth: "ipv4"
-        proto: "tcp"
+    - key: { direction: "ingress", ip: "0.0.0.0", port: 443, eth: "ipv4", proto: "tcp" }
+      value: { action: "mirror", to_iface: "eth1", track: false }
+
+    - key: { direction: "ingress", ip: "0.0.0.0", port: 8080, eth: "ipv4", proto: "tcp" }
       value:
         action: "redirect"
-        to_ip: "172.17.0.2"
-
-    - key:
-        direction: "ingress"
-        ip: "0.0.0.0"
-        port: 443
-        eth: "ipv4"
-        proto: "tcp"
-      value:
-        action: "mirror"
-        to_iface: "eth1"
+        track: true
+        algo: "round_robin"
+        to:
+          - { ip: "172.17.0.2", port: 8080 }
+          - { ip: "172.17.0.3", port: 8080 }
+          - { ip: "172.17.0.4", port: 8080 }
 
 sk:
   config:
@@ -102,21 +81,18 @@ sk:
     default_action: "pass"
 
   rules:
-    - key:
-        remote_ip: "198.51.100.0/24"
-        local_port: 443
-        proto: "tcp"
-      value:
-        action: "tune_tcp"
-        congestion_control: "bbr"
-        rto_min_ms: 200
+    - key: { remote_ip: "198.51.100.0/24", local_port: 443, proto: "tcp" }
+      value: { action: "tune_tcp", congestion_control: "bbr", rto_min_ms: 200 }
 
-    - key:
-        remote_ip: "127.0.0.1"
-        local_port: 6379
-        proto: "tcp"
+    - key: { remote_ip: "127.0.0.1", local_port: 6379, proto: "tcp" }
       value:
-        action: "sockmap_track"
+        action: "sock_balance"
+        track: true
+        algo: "hash"
+        to:
+          - { ip: "127.0.0.1", port: 6379 }
+          - { ip: "127.0.0.1", port: 6380 }
+          - { ip: "127.0.0.1", port: 6381 }
 
 msg:
   config:
@@ -124,10 +100,11 @@ msg:
     default_action: "pass"
     
   rules:
-    - key:
-        from_ip: "127.0.0.1"
-        from_port: 0
-        to_ip: "127.0.0.1"
-        to_port: 8080
+    - key: { from_ip: "127.0.0.1", from_port: 0, to_ip: "127.0.0.1", to_port: 8080 }
       value:
-        action: "sk_redirect"
+        action: "sk_balance_msg"
+        track: true
+        algo: "random"
+        to:
+          - { ip: "127.0.0.1", port: 9001 }
+          - { ip: "127.0.0.1", port: 9002 }

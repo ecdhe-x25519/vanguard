@@ -1,9 +1,14 @@
-use aya_ebpf::programs::XdpContext;
+use aya_ebpf::{
+    programs::XdpContext,
+    helpers::bpf_redirect,
+};
 
 use vanguard_core::{
     common::{
-        commons::{EbpfAction, Tuple5}, packet::*,
-    }, xdp::maps::rules::XdpRuleKey,
+        commons::{EbpfAction, Tuple5},
+        packet::*,
+    },
+    xdp::maps::rules::XdpRuleKey,
 };
 
 use crate::maps::*;
@@ -23,91 +28,72 @@ pub unsafe fn try_filter_ip(
         offset,
     )?;
 
-    let key = XdpRuleKey(Tuple5 {
-        src_ip: read_unchecked(tuple.src_ip.ptr, data),
-        src_port: read_unchecked(tuple.src_port.ptr, data),
-        dst_ip: read_unchecked(tuple.dst_ip.ptr, data),
-        dst_port: read_unchecked(tuple.dst_port.ptr, data),
-        proto: read_unchecked(tuple.proto.ptr, data),
-    });
+    let key;
+
+    if tuple.src_ip.is_v6 {
+        key = XdpRuleKey{ inner: Tuple5 {
+            src_ip: EbpfIp { addr: read_offset::<[u8; 16]>(data, tuple.src_ip.ofs), is_v6: true },
+            src_port: EbpfPort { inner: read_offset(data, tuple.src_port.ofs) },
+            dst_ip: EbpfIp { addr: read_offset::<[u8; 16]>(data, tuple.dst_ip.ofs), is_v6: true },
+            dst_port: EbpfPort { inner: read_offset(data, tuple.dst_port.ofs) },
+            proto: EbpfProto { inner: read_offset(data, tuple.proto.ofs) },
+        }};
+    } else {
+        let src_ip_v4 = read_offset::<[u8; 4]>(data, tuple.src_ip.ofs);
+        let mut src_ip_16 = [0u8; 16];
+        src_ip_16[..4].copy_from_slice(&src_ip_v4);
+
+        let dst_ip_v4 = read_offset::<[u8; 4]>(data, tuple.dst_ip.ofs);
+        let mut dst_ip_16 = [0u8; 16];
+        dst_ip_16[..4].copy_from_slice(&dst_ip_v4);
+
+        key = XdpRuleKey{ inner: Tuple5 {
+            src_ip: EbpfIp { addr: src_ip_16, is_v6: false },
+            src_port: EbpfPort { inner: read_offset(data, tuple.src_port.ofs) },
+            dst_ip: EbpfIp { addr: dst_ip_16, is_v6: false },
+            dst_port: EbpfPort { inner: read_offset(data, tuple.dst_port.ofs) },
+            proto: EbpfProto { inner: read_offset(data, tuple.proto.ofs) },
+        }};
+    }
 
     if let Some(val) = RULES.get(&key) {
-        let data_ptr = data as *mut u8;
-
-        let src_mac_ptr = data_ptr.add(tuple.src_mac.ptr as usize) as *mut [u8; 6];
-        let dst_mac_ptr = data_ptr.add(tuple.dst_mac.ptr as usize) as *mut [u8; 6];
-        
-        let src_port_ptr = data_ptr.add(tuple.src_port.ptr as usize) as *mut u16;
-        let dst_port_ptr = data_ptr.add(tuple.dst_port.ptr as usize) as *mut u16;
-
         match val.action {
-            EbpfAction::TX => {
-                swap(src_mac_ptr, dst_mac_ptr);
-                swap(src_port_ptr, dst_port_ptr);
-
-                if !tuple.src_ip.is_v6 {
-                    let src_ip_ptr = data_ptr.add(tuple.src_ip.ptr as usize) as *mut u32;
-                    let dst_ip_ptr = data_ptr.add(tuple.dst_ip.ptr as usize) as *mut u32;
-                    swap(src_ip_ptr, dst_ip_ptr);
-                } else {
-                    let src_ip_ptr = data_ptr.add(tuple.src_ip.ptr as usize) as *mut [u32; 4];
-                    let dst_ip_ptr = data_ptr.add(tuple.dst_ip.ptr as usize) as *mut [u32; 4];
-                    swap(src_ip_ptr, dst_ip_ptr);
-                }
-            }
-            EbpfAction::REDIRECT => {
-                let redir = val.redirect.0;
-
-                swap(src_mac_ptr, dst_mac_ptr);
-                swap(src_port_ptr, dst_port_ptr);
-
-                if !tuple.src_ip.is_v6 {
-                    let src_ip_ptr = data_ptr.add(tuple.src_ip.ptr as usize) as *mut u32;
-                    let dst_ip_ptr = data_ptr.add(tuple.dst_ip.ptr as usize) as *mut u32;
-
-                    swap(src_ip_ptr, dst_ip_ptr);
-
-                    let new_dst_ip_be = redir.src_ip; 
-                    let new_dst_port_be = u16::to_be(redir.src_port.0);
-                    let new_dst_port_be = u16::from_be_bytes(redir.src_port.0);
-
-                    let target_ip = EbpfIp::from_v4(new_dst_ip_be);
-                    update_ip_checksums(
-                        data,
-                        tuple.dst_ip.ptr,
-                        csum.l3_check,
-                        csum.l4_check,
-                        target_ip,
-                    );
-
-                    core::ptr::write_volatile(dst_port_ptr, new_dst_port_be);
-                } else {
-                    let src_ip_ptr = data_ptr.add(tuple.src_ip.ptr as usize) as *mut [u32; 4];
-                    let dst_ip_ptr = data_ptr.add(tuple.dst_ip.ptr as usize) as *mut [u32; 4];
-
-                    swap(src_ip_ptr, dst_ip_ptr);
-
-                    let new_dst_ip_be = redir.src_ip;
-                    let new_dst_port_be = u16::to_be(redir.src_port);
-                    let new_dst_port_be = u16::from_be_bytes(redir.src_port.0);
-
-                    let target_ip = EbpfIp::from_v6(new_dst_ip_be);
-                    update_ip_checksums(
-                        data,
-                        tuple.dst_ip.ptr,
-                        0,
-                        csum.l4_check,
-                        target_ip,
-                    );
-
-                    core::ptr::write_volatile(dst_port_ptr, new_dst_port_be);
-                }
-            }
-            _ => {}
-        }
-
-        return Ok((key.0.src_ip, val.action));
+            EbpfAction::TX => handle_tx(data, data_end, tuple, csum),
+            EbpfAction::REDIRECT => handle_redirect(data, data_end, tuple, val.redirect, csum),
+            other => return Ok((key.inner.src_ip, other)),
+        };
     }
     
-    return Ok((key.0.src_ip, EbpfAction::DROP))
+    return Ok((key.inner.src_ip, EbpfAction::DROP))
+}
+
+#[inline(always)]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn handle_tx(
+    data: usize,
+    data_end: usize,
+    tuple: OffsetTuple7,
+    csum: OffsetCsum,
+) -> Result<(), EbpfAction> {
+    swap_offset::<[u8; 6]>(data, tuple.src_mac.ofs, tuple.dst_mac.ofs);
+    swap_offset::<u16>(data, tuple.src_port.ofs, tuple.dst_port.ofs);
+
+    if !tuple.src_ip.is_v6 {
+        swap_offset::<u32>(data, tuple.src_ip.ofs, tuple.dst_ip.ofs);
+    } else {
+        swap_offset::<[u32; 4]>(data, tuple.src_ip.ofs, tuple.dst_ip.ofs);
+    }
+    
+    Ok(())
+}
+
+#[inline(always)]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn handle_redirect(
+    data: usize, 
+    data_end: usize, 
+    tuple: OffsetTuple7,
+    redir: XdpRuleKey,
+) -> Result<(), EbpfAction> {
+    bpf_redirect(ifindex, 0)
 }

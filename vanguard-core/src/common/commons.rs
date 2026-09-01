@@ -27,6 +27,25 @@ pub struct Tuple5 {
 #[cfg(feature = "userspace")]
 unsafe impl aya::Pod for Tuple5 {}
 
+#[inline(always)]
+pub fn hash(tuple: &Tuple5) -> u32 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    const ITERATIONS: usize = 56 / 8; // tuple size / tuple align
+    
+    let ptr = tuple as *const Tuple5 as *const u64;
+
+    for i in 0..ITERATIONS {
+        let chunk = unsafe { *ptr.add(i) };
+        hash ^= chunk;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+
+    ((hash >> 32) ^ hash) as u32
+}
+
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum EbpfAction {
